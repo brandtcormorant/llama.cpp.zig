@@ -20,7 +20,15 @@ Supported backends are:
 - CPU
 - Vulkan
 
-Other targets and backends can be added with time and infrastructure.
+Other targets and backends can be added with time and test devices.
+
+### Test devices
+
+- Random x86_64 running linux: All good.
+- Random x86_64 running windows: All good.
+- Raspberry Pi 5 (aarch64 linux): CPU works, Vulkan compiles but don't due to some lack of memory.
+- Surface pro X SQ2 (aarch64 windows): CPU works, vulkan compiles but don't run due to some missing feature.
+- Termux (aarch64 android/linux): CPU works, vulkan compiles but don't run.
 
 ## How to build
 
