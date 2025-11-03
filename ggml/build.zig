@@ -3,15 +3,15 @@ const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-    _ = optimize;
+    var optimize = b.standardOptimizeOption(.{});
+    optimize = .ReleaseFast; // other modes are not working well
 
     const strip = b.option(bool, "strip", "Strip binary") orelse false;
     const backend = b.option(Backend, "backend", "Choose backend") orelse .cpu;
 
     const options = Options{
         .target = target,
-        .optimize = .ReleaseFast, // others are not working
+        .optimize = optimize,
         .backend = backend,
         .strip = strip,
     };

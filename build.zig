@@ -4,7 +4,9 @@ const builtin = @import("builtin");
 pub fn build(b: *std.Build) void {
     // consider building with mcpu=x86_64_v3 for broader compatibility, due to avx
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    var optimize = b.standardOptimizeOption(.{});
+
+    optimize = .ReleaseFast; //override optimize, not all modes work currently.
 
     const strip = b.option(bool, "strip", "Strip binary") orelse false;
     const backend = b.option(Backend, "backend", "Choose backend") orelse .cpu;
@@ -76,6 +78,26 @@ fn buildLlamaCpp(
     mod.addCSourceFiles(.{
         .root = build_info_file.getDirectory(),
         .files = &.{"build-info.cpp"},
+        .flags = cppflags,
+    });
+
+    // each model cpp
+    var model_files = std.array_list.Managed([]const u8).init(b.allocator);
+    defer model_files.deinit();
+
+    const src_shader_path = llama_dep.path("src/models");
+    var iterable_dir = std.fs.cwd().openDir(src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
+    defer iterable_dir.close();
+    var it = iterable_dir.iterate();
+    while (it.next() catch @panic("failed to iterate models dir")) |entry| {
+        if (std.mem.endsWith(u8, entry.name, ".cpp")) {
+            const cpp = b.dupe(entry.name);
+            model_files.append(cpp) catch @panic("failed to add model cpp");
+        }
+    }
+    mod.addCSourceFiles(.{
+        .root = llama_dep.path("src/models"),
+        .files = model_files.items,
         .flags = cppflags,
     });
 
