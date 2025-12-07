@@ -171,6 +171,7 @@ fn buildCommon(
     }
 
     mod.addCMacro("NDEBUG", "");
+    mod.addCMacro("LLAMA_USE_HTTPLIB", "");
 
     mod.addIncludePath(llama_dep.path("common"));
     mod.addIncludePath(llama_dep.path("include"));
@@ -187,6 +188,10 @@ fn buildCommon(
             .flags = cppflags,
         });
     }
+    mod.addCSourceFile(.{
+        .file = llama_dep.path("vendor/cpp-httplib/httplib.cpp"),
+        .flags = cppflags,
+    });
 
     var lib = b.addLibrary(.{
         .name = "llama_common",
@@ -234,16 +239,16 @@ fn buildMTMD(
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
 
-    mod.addCSourceFiles(.{
-        .root = llama_dep.path("tools/mtmd"),
-        .files = &[_][]const u8{
-            "mtmd.cpp",
-            "mtmd-audio.cpp",
-            "clip.cpp",
-            "mtmd-helper.cpp",
-        },
-        .flags = cppflags,
-    });
+    const src_path = llama_dep.path("tools/mtmd");
+    const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files) |file| {
+        if (std.mem.endsWith(u8, file.getPath(b), "deprecation-warning.cpp") or
+            std.mem.endsWith(u8, file.getPath(b), "mtmd-cli.cpp")) continue;
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
 
     var lib = b.addLibrary(.{
         .name = "mtmd",
@@ -372,13 +377,6 @@ fn buildServer(
     });
 
     const llama_dep = b.dependency("llama_cpp", .{});
-    mod.addCSourceFiles(.{
-        .root = llama_dep.path("tools/server"),
-        .files = &.{
-            "server.cpp",
-        },
-        .flags = cppflags,
-    });
 
     mod.addIncludePath(llama_dep.path("vendor"));
     mod.addIncludePath(llama_dep.path("common"));
@@ -386,11 +384,23 @@ fn buildServer(
     mod.addIncludePath(llama_dep.path("ggml/include"));
     mod.addIncludePath(llama_dep.path("tools/server"));
 
+    const src_path = llama_dep.path("tools/server");
+    const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
+
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
 
     const mtmd = buildMTMD(b, llama, options);
     mod.linkLibrary(mtmd);
+
+    const common = buildCommon(b, llama, options);
+    mod.linkLibrary(common);
 
     // use xxd to compile assets
     const xxd_mod = b.addModule(
