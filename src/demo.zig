@@ -9,12 +9,9 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() != .leak);
     const allocator = gpa.allocator();
 
-    const prompt = "Hello, ";
-
     // init
-    c.ggml_backend_load_all();
-    //c.llama_backend_init();
-    //defer c.llama_backend_free();
+    c.llama_backend_init();
+    defer c.llama_backend_free();
 
     // load model
     var params = c.llama_model_default_params();
@@ -27,23 +24,22 @@ pub fn main() !void {
         return error.FailedToLoadModel;
     }
 
-    // tokenize prompt
+    try generate(allocator, model, "Hello, ");
+    try generate(allocator, model, "Goodbye, ");
+}
+
+fn generate(
+    allocator: std.mem.Allocator,
+    model: ?*c.llama_model,
+    prompt: []const u8,
+) !void {
     const vocab = c.llama_model_get_vocab(model);
-
-    const prompt_token_len = -c.llama_tokenize(vocab, prompt, prompt.len, null, 0, true, true);
-    const prompt_tokens = try allocator.alloc(c.llama_token, @abs(prompt_token_len));
-    defer allocator.free(prompt_tokens);
-
-    const tokenize_prompt_result = c.llama_tokenize(vocab, prompt, prompt.len, prompt_tokens.ptr, prompt_token_len, true, true);
-    if (tokenize_prompt_result < 0) {
-        return error.FailedToTokenizePrompt;
-    }
 
     // init context
     const model_ctx_train = c.llama_model_n_ctx_train(model);
     var context_params = c.llama_context_default_params();
     if (model_ctx_train <= 0) {
-        context_params.n_ctx = 4096;
+        context_params.n_ctx = 0;
     } else {
         context_params.n_ctx = @abs(model_ctx_train);
     }
@@ -61,6 +57,7 @@ pub fn main() !void {
     var sampler_params = c.llama_sampler_chain_default_params();
     sampler_params.no_perf = true;
     const sampler = c.llama_sampler_chain_init(sampler_params);
+    defer c.llama_sampler_free(sampler);
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_greedy());
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_top_k(40));
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_top_p(0.9, 1));
@@ -68,17 +65,60 @@ pub fn main() !void {
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_temp(0.6));
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_dist(c.LLAMA_DEFAULT_SEED));
 
-    var batch = c.llama_batch_get_one(prompt_tokens.ptr, prompt_token_len);
+    // tokenize prompt
+    const prompt_token_len = -c.llama_tokenize(
+        vocab,
+        prompt.ptr,
+        @intCast(prompt.len),
+        null,
+        0,
+        true,
+        true,
+    );
+    const prompt_tokens = try allocator.alloc(c.llama_token, @abs(prompt_token_len));
+    defer allocator.free(prompt_tokens);
+
+    const tokenize_prompt_result = c.llama_tokenize(
+        vocab,
+        prompt.ptr,
+        @intCast(prompt.len),
+        prompt_tokens.ptr,
+        prompt_token_len,
+        true,
+        true,
+    );
+    if (tokenize_prompt_result < 0) {
+        return error.FailedToTokenizePrompt;
+    }
+
+    // init batch
+    var batch = c.llama_batch_get_one(prompt_tokens.ptr, @intCast(prompt_tokens.len));
+
+    if (c.llama_model_has_encoder(model)) {
+        const encode_r = c.llama_encode(context, batch);
+        if (encode_r != 0) {
+            std.log.err("failed to encode: {d}", .{encode_r});
+            return error.FailedToEncodePrompt;
+        }
+        var decoder_token = c.llama_model_decoder_start_token(model);
+        if (decoder_token == c.LLAMA_TOKEN_NULL) {
+            decoder_token = c.llama_vocab_bos(vocab);
+        }
+        batch = c.llama_batch_get_one(&decoder_token, 1);
+    }
 
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const out = &stdout_writer.interface;
 
-    try out.print(prompt, .{});
+    try out.print("{s}\n", .{prompt});
 
-    const iter_limit = 128 * 1024;
-    var iterations: usize = 0;
-    eval: while (iterations < iter_limit) : (iterations += 1) {
+    // track tokens and limits
+    const limit: usize = @intCast(c.llama_n_ctx(context));
+    var count: usize = prompt_tokens.len;
+
+    // eval loop
+    eval: while (count <= limit) : (count += 1) {
         const decode_r = c.llama_decode(context, batch);
         if (decode_r > 0) {
             std.log.err("failed to eval: {d}", .{decode_r});
