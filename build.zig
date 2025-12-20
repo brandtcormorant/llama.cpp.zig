@@ -5,7 +5,6 @@ pub fn build(b: *std.Build) void {
     // consider building with mcpu=x86_64_v3 for broader compatibility, due to avx
     const target = b.standardTargetOptions(.{});
     var optimize = b.standardOptimizeOption(.{});
-
     optimize = .ReleaseFast; //override optimize, not all modes work currently.
 
     const strip = b.option(bool, "strip", "Strip binary") orelse false;
@@ -235,6 +234,7 @@ fn buildMTMD(
     mod.addIncludePath(llama_dep.path("include"));
     mod.addIncludePath(llama_dep.path("vendor"));
     mod.addIncludePath(llama_dep.path("tools/mtmd"));
+    mod.addIncludePath(llama_dep.path("tools/mtmd/models"));
 
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
@@ -244,6 +244,15 @@ fn buildMTMD(
     for (cpp_files) |file| {
         if (std.mem.endsWith(u8, file.getPath(b), "deprecation-warning.cpp") or
             std.mem.endsWith(u8, file.getPath(b), "mtmd-cli.cpp")) continue;
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
+
+    const src_path2 = llama_dep.path("tools/mtmd/models");
+    const cpp_files2 = listFilesWithExtension(b, src_path2, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files2) |file| {
         mod.addCSourceFile(.{
             .file = file,
             .flags = cppflags,
